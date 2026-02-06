@@ -1,0 +1,1826 @@
+{
+  "name": "Multi-Platform Social Media Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "57 11 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -12368,
+        1696
+      ],
+      "id": "1ff1c147-253e-4439-8bd2-6b0b62e042cf",
+      "name": "Auto Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLATFORM ITERATOR - PARALLEL EXECUTION\n// ============================================\n// This node generates one item per platform.\n// All platforms will be processed IN PARALLEL.\n// Each platform gets its own:\n//   - LLM generation\n//   - Image generation\n//   - Slack approval request\n//   - Posting flow\n//\n// To add/remove platforms, simply edit the 'activePlatforms' array below.\n// ============================================\n\n// ACTIVE PLATFORMS - Edit this array to control which platforms are processed\nconst activePlatforms = [\n  'facebook',\n  'linkedin',\n  // 'instagram'\n  // Add more platforms here as needed:\n  // 'twitter',\n  // 'threads',\n  // 'tiktok',\n  // 'pinterest'\n];\n\n// Get any additional data from the trigger (like custom date)\nconst triggerData = $json || {};\n\n// Generate one output item per platform\n// n8n will process all these items IN PARALLEL\nconst platformItems = activePlatforms.map(platform => ({\n  json: {\n    ...triggerData,\n    platform: platform,\n    parallel_execution: true,\n    total_platforms: activePlatforms.length,\n    execution_id: `${new Date().toISOString().split('T')[0]}_${platform}`\n  }\n}));\n\nreturn platformItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -12176,
+        1696
+      ],
+      "id": "e60c8656-316f-48a6-9a0b-d692443078ac",
+      "name": "Platform Iterator (Parallel)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLATFORM CONFIGURATION HUB\n// ============================================\n// This is the SINGLE SOURCE OF TRUTH for all platform-specific settings.\n// To add a new platform, simply add a new entry to the platformConfigs object.\n// The workflow will automatically handle routing and platform-specific logic.\n//\n// SUPPORTED PLATFORMS: facebook, linkedin, instagram\n// FUTURE PLATFORMS: twitter, threads, tiktok, pinterest, etc.\n// ============================================\n\n// Get the platform from input or default to 'facebook'\nconst inputPlatform = $json.platform || $input?.first()?.json?.platform || 'facebook';\nconst platform = inputPlatform.toLowerCase().trim();\n\n// ============================================\n// PLATFORM CONFIGURATIONS (MASTER REGISTRY)\n// ============================================\nconst platformConfigs = {\n  facebook: {\n    platform_id: 'facebook',\n    platform_name: 'Facebook',\n    display_name: 'Facebook',\n    \n    // Content specifications\n    content_specs: {\n      max_caption_length: 63206,\n      optimal_caption_length: 500,\n      max_hashtags: 30,\n      recommended_hashtags: 5,\n      image_aspect_ratio: '1:1',\n      image_dimensions: '1080x1080',\n      supports_carousel: true,\n      supports_stories: true,\n      supports_reels: true,\n      link_in_caption: true,\n      emoji_friendly: true\n    },\n    \n    // Platform-specific writing guidelines\n    writing_guidelines: `\n      FACEBOOK POST BEST PRACTICES:\n      - Start with an attention-grabbing hook (question, bold statement, or statistic)\n      - Keep the first line under 125 characters (visible before \"See More\")\n      - Use line breaks for readability\n      - Include a clear call-to-action (CTA)\n      - Hashtags work but are less critical than Instagram - use 2-5 relevant ones\n      - Engage conversationally - Facebook users expect a friendly tone\n      - Questions increase engagement significantly\n      - Emojis are welcome but use sparingly (1-3 per post)\n      - Tag relevant pages when appropriate\n      - Include relevant links (Facebook doesn't penalize external links)\n      - Optimal posting length: 40-80 words for maximum engagement\n    `,\n    \n    // Google Drive folder for storing images\n    drive: {\n      folder_id: '1R9cG7u5ya2VQtM8Ndm2iJw1EEBvRlhZc',\n      folder_name: 'post_assets_facebook'\n    },\n    \n    // Google Sheet for logging posts\n    sheets: {\n      document_id: '1axaNjhk6uDwPQa_epICDsLWuSwISI0v1r7eFwFq0_V4',\n      sheet_name: 'facebook_posts',\n      sheet_gid: '0'\n    },\n    \n    // Slack channel for approvals\n    slack: {\n      approval_channel: 'C0AB3SXM9UH',\n      channel_name: 'social-facebook'\n    },\n    \n    // API configuration\n    api: {\n      type: 'graph_api',\n      version: 'v23.0',\n      endpoint: 'me/photos'\n    }\n  },\n  \n  linkedin: {\n    platform_id: 'linkedin',\n    platform_name: 'LinkedIn',\n    display_name: 'LinkedIn',\n    \n    // Content specifications\n    content_specs: {\n      max_caption_length: 3000,\n      optimal_caption_length: 1300,\n      max_hashtags: 30,\n      recommended_hashtags: 3,\n      image_aspect_ratio: '1.91:1',\n      image_dimensions: '1200x627',\n      supports_carousel: true,\n      supports_articles: true,\n      supports_polls: true,\n      link_in_caption: true,\n      emoji_friendly: false\n    },\n    \n    // Platform-specific writing guidelines\n    writing_guidelines: `\n      LINKEDIN POST BEST PRACTICES:\n      - Lead with a strong, professional hook that provides value\n      - First 2-3 lines are crucial - they appear before \"see more\"\n      - Use a professional, authoritative but approachable tone\n      - Share insights, industry knowledge, or thought leadership\n      - Structure with clear paragraphs and white space\n      - Limit hashtags to 3-5 highly relevant ones (placed at end)\n      - Avoid excessive emojis - LinkedIn is a professional platform (0-2 max)\n      - Ask thoughtful questions to encourage professional discourse\n      - Include data, statistics, or case study references when possible\n      - Tag relevant companies or professionals (sparingly)\n      - B2B focus: speak to decision-makers and industry professionals\n      - CTA should be professional: \"Let's connect\", \"Share your thoughts\", \"Learn more\"\n      - Optimal length: 1200-1500 characters for maximum engagement\n      - Focus on: Industry insights, company achievements, professional advice, case studies\n    `,\n    \n    // Google Drive folder for storing images\n    drive: {\n      folder_id: '1bVJyaJvrKr7OuT-Hdh9vIPpSfuSbV1FN',\n      folder_name: 'post_assets_linkedin'\n    },\n    \n    // Google Sheet for logging posts\n    sheets: {\n      document_id: '1axaNjhk6uDwPQa_epICDsLWuSwISI0v1r7eFwFq0_V4',\n      sheet_name: 'linkedin_posts',\n      sheet_gid: '1396616725'\n    },\n    \n    // Slack channel for approvals\n    slack: {\n      approval_channel: 'C0AAQUY4DL2',\n      channel_name: 'social-linkedin'\n    },\n    \n    // API configuration\n    api: {\n      type: 'linkedin_api',\n      version: 'v2',\n      endpoint: 'ugcPosts'\n    }\n  },\n  \n  instagram: {\n    platform_id: 'instagram',\n    platform_name: 'Instagram',\n    display_name: 'Instagram',\n    \n    // Content specifications\n    content_specs: {\n      max_caption_length: 2200,\n      optimal_caption_length: 500,\n      max_hashtags: 30,\n      recommended_hashtags: 20,\n      image_aspect_ratio: '1:1',\n      image_dimensions: '1080x1080',\n      supports_carousel: true,\n      supports_stories: true,\n      supports_reels: true,\n      link_in_caption: false,\n      emoji_friendly: true\n    },\n    \n    // Platform-specific writing guidelines\n    writing_guidelines: `\n      INSTAGRAM POST BEST PRACTICES:\n      - Start with a compelling hook in the first line\n      - Only first 125 characters show before \"more\" - make them count!\n      - Hashtags are CRITICAL for discovery - use 15-25 relevant hashtags\n      - Mix hashtag sizes: 5 large (1M+), 10 medium (100K-1M), 10 small (under 100K)\n      - Place hashtags either in caption or first comment\n      - Use line breaks and emojis to improve readability\n      - Visual-first platform: reference the image content\n      - Stories tone can be more casual than feed\n      - Include a CTA: \"Double-tap if you agree\", \"Save for later\", \"Tag someone\"\n      - No clickable links in captions - use \"Link in bio\" strategy\n      - Emojis are highly encouraged (3-5 per post)\n      - Optimal caption length: 138-150 characters for engagement, longer for value posts\n      - Use carousel posts for educational content\n      - Local hashtags work well for Pakistani market: #Pakistan #Faisalabad #SolarPakistan\n    `,\n    \n    // Google Drive folder for storing images\n    drive: {\n      folder_id: '1gMrdDkO3lgGJVYPyFrSitQmmLY-CnO0k',\n      folder_name: 'post_assets_instagram'\n    },\n    \n    // Google Sheet for logging posts\n    sheets: {\n      document_id: '1axaNjhk6uDwPQa_epICDsLWuSwISI0v1r7eFwFq0_V4',\n      sheet_name: 'instagram_posts',\n      sheet_gid: '1327888190'\n    },\n    \n    // Slack channel for approvals\n    slack: {\n      approval_channel: 'C0AAUHA5A04',\n      channel_name: 'social-instagram'\n    },\n    \n    // API configuration\n    api: {\n      type: 'instagram_graph_api',\n      version: 'v23.0',\n      endpoint: 'media'\n    }\n  },\n  \n  // ============================================\n  // TEMPLATE FOR FUTURE PLATFORMS\n  // ============================================\n  // twitter: {\n  //   platform_id: 'twitter',\n  //   platform_name: 'Twitter/X',\n  //   display_name: 'X (Twitter)',\n  //   content_specs: {\n  //     max_caption_length: 280,\n  //     optimal_caption_length: 240,\n  //     max_hashtags: 5,\n  //     recommended_hashtags: 2,\n  //     image_aspect_ratio: '16:9',\n  //     image_dimensions: '1200x675',\n  //     supports_threads: true,\n  //     supports_polls: true,\n  //     link_in_caption: true,\n  //     emoji_friendly: true\n  //   },\n  //   writing_guidelines: `TWITTER/X BEST PRACTICES: ...`,\n  //   drive: { folder_id: '...', folder_name: 'post_assets_twitter' },\n  //   sheets: { document_id: '...', sheet_name: 'twitter_posts', sheet_gid: '0' },\n  //   slack: { approval_channel: '...', channel_name: 'twitter_automation' },\n  //   api: { type: 'twitter_api', version: 'v2', endpoint: 'tweets' }\n  // },\n  //\n  // threads: { ... },\n  // tiktok: { ... },\n  // pinterest: { ... }\n};\n\n// ============================================\n// PLATFORM VALIDATION & SELECTION\n// ============================================\nconst selectedConfig = platformConfigs[platform];\n\nif (!selectedConfig) {\n  const availablePlatforms = Object.keys(platformConfigs).join(', ');\n  throw new Error(`Unknown platform: ${platform}. Available platforms: ${availablePlatforms}`);\n}\n\n// ============================================\n// OUTPUT: Platform Configuration + Context\n// ============================================\nreturn [{\n  json: {\n    ...$json,   // Preserve all previous data from trigger\n    \n    // Platform identification\n    platform: selectedConfig.platform_id,\n    platform_name: selectedConfig.platform_name,\n    platform_display: selectedConfig.display_name,\n    \n    // Content specifications for this platform\n    content_specs: selectedConfig.content_specs,\n    \n    // Writing guidelines to inject into LLM prompt\n    platform_writing_guidelines: selectedConfig.writing_guidelines,\n    \n    // Google Drive configuration\n    drive: selectedConfig.drive,\n    \n    // Google Sheets configuration\n    sheets: selectedConfig.sheets,\n    \n    // Slack configuration\n    slack: selectedConfig.slack,\n    \n    // API configuration\n    api: selectedConfig.api,\n    \n    // Project metadata\n    project: 'Electro-Tech',\n    timezone: 'Asia/Karachi',\n    \n    // All available platforms (for reference)\n    available_platforms: Object.keys(platformConfigs)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11984,
+        1696
+      ],
+      "id": "5c49902f-7093-4ede-b863-def950a8220d",
+      "name": "Platform Configuration Hub"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -11584,
+        1504
+      ],
+      "id": "d5003456-f26b-452f-9cce-e9fd337acf6a",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input from Step 1\nconst weekday = $json.weekday;\n\nlet flags = {\n  isFriday: false,\n  isWeekend: false\n};\n\nif (weekday === \"Friday\") {\n  flags.isFriday = true;\n} else if ([\"Saturday\", \"Sunday\"].includes(weekday)) {\n  flags.isWeekend = true;\n}\n\nreturn [{\n  ...$json,\n  flags: flags\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11136,
+        1504
+      ],
+      "id": "12e89d2b-da5c-47ec-8717-73e823e6f8b5",
+      "name": "Friday-Weekend Day Analyzer"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This checks the incoming data from ANY trigger connected to this node\nlet inputDate = null;\n\n// 1. Try to get date from the immediate incoming data (Webhook)\nif ($json && $json.date) {\n  inputDate = $json.date;\n} \n// 2. Backup: Check if it's inside a 'body' or 'query' (common in Webhooks)\nelse if ($json.body && $json.body.date) {\n  inputDate = $json.body.date;\n}\nelse if ($json.query && $json.query.date) {\n  inputDate = $json.query.date;\n}\n\n// Case: No date provided (Schedule/Cron run)\nif (!inputDate) {\n  const now = new Date();\n  // Pakistan timezone (PKT - UTC+5)\n  const pktDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));\n  \n  const year = pktDate.getFullYear();\n  const month = String(pktDate.getMonth() + 1).padStart(2, '0');\n  const day = String(pktDate.getDate()).padStart(2, '0');\n  \n  inputDate = `${year}-${month}-${day}`;\n}\n\n// Validation (YYYY-MM-DD)\nconst regex = /^\\d{4}-\\d{2}-\\d{2}$/;\nif (!regex.test(inputDate)) {\n  throw new Error(`Invalid date format: ${inputDate}. Please use YYYY-MM-DD`);\n}\n\n// Parse the date components\nconst [year, month, day] = inputDate.split('-').map(Number);\nconst dateObj = new Date(Date.UTC(year, month - 1, day));\n\n// Get weekday for Karachi\nconst weekday = dateObj.toLocaleDateString('en-US', { \n  weekday: 'long', \n  timeZone: 'Asia/Karachi' \n});\n\nreturn [{\n  json: {\n    date: inputDate,\n    weekday: weekday,\n    year: year,\n    month: month,\n    day: day,\n    source: ($json.date || ($json.body && $json.body.date)) ? 'manual' : 'auto'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11360,
+        1504
+      ],
+      "id": "b70c0a04-b98a-4feb-8fe6-c8c85c0ea01a",
+      "name": "Weekday-Month-Year Analyzer"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n\n  // Poora item clone (kuch bhi lose na ho)\n  const output = JSON.parse(JSON.stringify(item.json));\n\n  // Hijri date uthao\n  const hijriDate = output.data.hijri.date; // \"21-07-1447\"\n\n  // Split\n  let [day, month, year] = hijriDate.split(\"-\").map(Number);\n\n  // Pakistan timezone adjustment: Hijri date is 1 day behind\n  // This accounts for lunar sighting differences in Pakistan\n  day = day - 1;\n\n  // Safety (month start ka edge case)\n  if (day < 1) {\n    day = 29; // Fallback to 29th of previous month\n  }\n\n  // Update ONLY hijri date with Pakistan-adjusted value\n  output.data.hijri.date =\n    `${String(day).padStart(2, \"0\")}-${String(month).padStart(2, \"0\")}-${year}`;\n\n  // Marker to indicate Pakistan timezone correction applied\n  output.data.hijri.corrected = true;\n  output.data.hijri.timezone = \"Asia/Karachi\";\n\n  return {\n    json: output\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10688,
+        1504
+      ],
+      "id": "626c5ade-d49c-4581-9dc0-82aeb2bfffd4",
+      "name": "Hijri-Date According to Pakistan"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  // Deep clone item to avoid truncation\n  const output = JSON.parse(JSON.stringify(item.json));\n\n  // 1️⃣ Hijri data\n  const hijri = output.data.hijri;\n\n  // Original day from API\n  let hijriDay = parseInt(hijri.day);\n  const hijriMonth = hijri.month.number;\n\n  // 2️⃣ Correct Hijri day for Pakistan if lunarSighting=false\n  if (hijri.lunarSighting === false) {\n    hijriDay -= 1;\n    if (hijriDay < 1) hijriDay = 29; // simple fallback, can be improved\n  }\n\n  // 3️⃣ Islamic Events List (Hijri to Georgian mapping)\n  const islamicEvents = {\n    \"1-1\":   { type: \"Major\", name: \"Youm-e-Hijri (Islamic New Year)\" },\n    \"1-10\":  { type: \"Major\", name: \"Youm-e-Ashura\" },\n    \"3-1\":   { type: \"Minor\", name: \"Rabi-ul-Awwal ka Chand\" },\n    \"3-12\":  { type: \"Major\", name: \"Eid Milad-un-Nabi ﷺ\" },\n    \"4-11\":  { type: \"Minor\", name: \"Gyarvi Sharif\" },\n    \"6-18\":  { type: \"Minor\", name: \"Wisal Bibi Fatima (RA)\" },\n    \"7-1\":   { type: \"Minor\", name: \"Rajab ka Chand\" },\n    \"7-13\":  { type: \"Major\", name: \"Wiladat Hazrat Ali (RA)\" },\n    \"7-27\":  { type: \"Major\", name: \"Shab-e-Meraj\" },\n    \"8-3\":   { type: \"Minor\", name: \"Wiladat Imam Hussain (RA)\" },\n    \"8-15\":  { type: \"Major\", name: \"Shab-e-Barat\" },\n    \"9-1\":   { type: \"Major\", name: \"Ramadan ka Pehla Roza\" },\n    \"9-27\":  { type: \"Major\", name: \"Shab-e-Qadr\" },\n    \"10-1\":  { type: \"Major\", name: \"Eid-ul-Fitr\" },\n    \"12-9\":  { type: \"Major\", name: \"Youm-e-Arafah\" },\n    \"12-10\": { type: \"Major\", name: \"Eid-ul-Adha\" }\n  };\n\n  // 4️⃣ Lookup Event using corrected Hijri day\n  const todayKey = `${hijriMonth}-${hijriDay}`;\n  const eventToday = islamicEvents[todayKey] || null;\n\n  // 5️⃣ Output JSON (everything intact)\n  // This code correctly maps Islamic (Hijri) dates to Georgian dates\n  // by using the API response which contains both Hijri and Gregorian date info\n  return {\n    json: {\n      ...output,                    // keep all original API data (includes both Hijri and Gregorian)\n      hijri_day_corrected: hijriDay, // corrected day for lookup\n      event_found: !!eventToday,\n      event_type: eventToday?.type || \"None\",\n      event_name: eventToday?.name || \"No Special Event\",\n      post_priority: eventToday\n        ? (eventToday.type === \"Major\" ? \"HIGH\" : \"NORMAL\")\n        : \"LOW\"\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10480,
+        1392
+      ],
+      "id": "78921a73-2902-4545-819f-1e832d50e70e",
+      "name": "Mapping Islamic Date into Georgian Date"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -10240,
+        1488
+      ],
+      "id": "01b5e619-0471-4c50-b867-1a067530c8a1",
+      "name": "Combining Data"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.aladhan.com/v1/gToH/' + $json.day + '-' + $json.month + '-' + $json.year }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -10912,
+        1504
+      ],
+      "id": "c439dae8-7451-40c3-a621-76c4d4586054",
+      "name": "Hijri-Calender-Api"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Step 4: Context Mixer (Fixed for current API array input)\n\n// Take first item from input array\nconst item = items[0].json;\n\n// -------------------------\n// Step 2: Weekday detection\n// -------------------------\n\nlet weekday = item.data?.gregorian?.weekday?.en || \"Unknown\";\nlet isFriday = weekday === \"Friday\";\nlet isWeekend = weekday === \"Saturday\" || weekday === \"Sunday\";\n\n// -------------------------\n// Step 3: Islamic Event\n// -------------------------\nconst islamicEvent = item.event_found\n  ? { exists: true, type: item.event_type, name: item.event_name }\n  : { exists: false };\n\n// -------------------------\n// Patriotic Events (Gregorian)\n// -------------------------\nconst patrioticEvents = {\n  \"3-23\": { type: \"Major\", name: \"Pakistan Day\" },\n  \"8-14\": { type: \"Major\", name: \"Independence Day\" },\n  \"12-25\": { type: \"Major\", name: \"Quaid-e-Azam Day\" },\n  \"12-31\": { type: \"Minor\", name: \"New Year Eve\" }\n};\n\nconst gMonth = parseInt(item.data?.gregorian?.month?.number || 0);\nconst gDay = parseInt(item.data?.gregorian?.day || 0);\nconst todayKey = `${gMonth}-${gDay}`;\nconst patrioticEvent = patrioticEvents[todayKey] || null;\n\n// -------------------------\n// Combined Events + Post Decision\n// -------------------------\nlet combinedEvents = [];\nif (isWeekend) combinedEvents.push(\"Weekend\");\nif (isFriday) combinedEvents.push(\"Friday\");\nif (islamicEvent.exists) combinedEvents.push(islamicEvent.name);\nif (patrioticEvent) combinedEvents.push(patrioticEvent.name);\n\nlet postType = \"Normal\";\nlet priority = \"LOW\";\n\nif (islamicEvent.exists && islamicEvent.type === \"Major\") {\n  postType = \"Islamic\";\n  priority = \"HIGH\";\n} else if (islamicEvent.exists) {\n  postType = \"Islamic\";\n  priority = \"NORMAL\";\n} else if (patrioticEvent) {\n  postType = \"Patriotic\";\n  priority = patrioticEvent.type === \"Major\" ? \"HIGH\" : \"NORMAL\";\n} else if (isFriday) {\n  postType = \"Friday\";\n  priority = \"NORMAL\";\n} else if (isWeekend) {\n  postType = \"Weekend\";\n  priority = \"LOW\";\n}\n\n// -------------------------\n// Return final output\n// -------------------------\nreturn [{\n  json: {\n    weekday,\n    isFriday,\n    isWeekend,\n    islamicEvent,\n    patrioticEvent,\n    combinedEvents,\n    postType,\n    priority\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10016,
+        1488
+      ],
+      "id": "2b9fdafa-c0ea-42b8-8371-36d810f731bd",
+      "name": "Core Logic Combing Events and Priority Setter"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -9040,
+        1712
+      ],
+      "id": "ed600f6d-e022-42ba-a9a1-a82d9644957e",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "TwjdtXCF59ohdZkL",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "facebook-condition",
+              "leftValue": "={{ $('Platform Configuration Hub').item.json.platform }}",
+              "rightValue": "facebook",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6608,
+        976
+      ],
+      "id": "1a355380-0e81-4cc5-b31c-7e6ca13e8939",
+      "name": "Is Facebook?"
+    },
+    {
+      "parameters": {
+        "httpRequestMethod": "POST",
+        "graphApiVersion": "v23.0",
+        "node": "me",
+        "edge": "feed",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "message",
+                "value": "={{ $('Combining Prompt And Ref. Images').item.json.caption_full }}\n\n{{ $('Combining Prompt And Ref. Images').item.json.hashtags }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        -6368,
+        960
+      ],
+      "id": "728bbb6f-2a50-44c6-9afc-06aaa0a682db",
+      "name": "Facebook Posting",
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "olGpVti9M95uqoHj",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "linkedin-condition",
+              "leftValue": "={{ $('Platform Configuration Hub').item.json.platform }}",
+              "rightValue": "linkedin",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6608,
+        1216
+      ],
+      "id": "7d6aafd2-eb36-4574-aaec-cb708c69da3a",
+      "name": "Is LinkedIn?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "instagram-condition",
+              "leftValue": "={{ $('Platform Configuration Hub').item.json.platform }}",
+              "rightValue": "instagram",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6608,
+        1456
+      ],
+      "id": "2fccb355-6dd1-425a-ba15-a72f6675209f",
+      "name": "Is Instagram?"
+    },
+    {
+      "parameters": {
+        "httpRequestMethod": "POST",
+        "graphApiVersion": "v23.0",
+        "node": "={{ $('Platform Configuration Hub').item.json.instagram_business_account_id || 'YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID' }}",
+        "edge": "media",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "image_url",
+                "value": "={{ $('Upload file To Drive').item.json.webViewLink }}"
+              },
+              {
+                "name": "caption",
+                "value": "={{ $('Combining Prompt And Ref. Images').item.json.caption_full }}\n\n{{ $('Combining Prompt And Ref. Images').item.json.hashtags }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        -6368,
+        1440
+      ],
+      "id": "8c3300e2-ac22-43b1-b045-eae7ba87e0ee",
+      "name": "Instagram Create Media Container",
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "RBp50LG4TiUmJNk5",
+          "name": "For Instagram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpRequestMethod": "POST",
+        "graphApiVersion": "v23.0",
+        "node": "={{ $('Platform Configuration Hub').item.json.instagram_business_account_id || 'YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID' }}",
+        "edge": "media_publish",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "creation_id",
+                "value": "={{ $json.id }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        -6128,
+        1440
+      ],
+      "id": "b0606776-728a-4333-a77e-05fcfc8c592b",
+      "name": "Instagram Publish Media",
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "RBp50LG4TiUmJNk5",
+          "name": "For Instagram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "CORE DAY LOGIC (ADVANCED) - PLATFORM AGNOSTIC",
+        "height": 352,
+        "width": 1792,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -11664,
+        1360
+      ],
+      "id": "d086e986-917d-46c5-a7a6-9b4bdbad435b",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Reference Logic (Integrating By Google Drive)",
+        "height": 400,
+        "width": 864,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -11632,
+        1920
+      ],
+      "id": "b224386d-ef07-42c1-8879-de432a1a04b9",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "14Gnj0nU3i9RLubbIyEGJey1y7pOQUMO5",
+          "mode": "list",
+          "cachedResultName": "electro-tech logo.jpeg",
+          "cachedResultUrl": "https://drive.google.com/file/d/14Gnj0nU3i9RLubbIyEGJey1y7pOQUMO5/view?usp=drivesdk"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -11472,
+        1968
+      ],
+      "id": "ce63c30a-d0e6-414b-a18a-804b2f484270",
+      "name": "Download Reference Sample",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "O1LoiWKlENbzpUsx",
+          "name": "ElectroTech Cred"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "1hh3SSfrK-VemXML3RhIW_2ZQNfUtKq4G",
+          "mode": "list",
+          "cachedResultName": "electro-Tech.jpg",
+          "cachedResultUrl": "https://drive.google.com/file/d/1hh3SSfrK-VemXML3RhIW_2ZQNfUtKq4G/view?usp=drivesdk"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -11472,
+        2160
+      ],
+      "id": "950e7548-b538-4dda-b21d-9a3f7f8bdb51",
+      "name": "Download Sample Image ",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "O1LoiWKlENbzpUsx",
+          "name": "ElectroTech Cred"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const binaryPropertyName = 'data';\nconst newBinaryPropertyName = 'data_1';\n\nconst binaryData = items[0].binary[binaryPropertyName];\n\nif (!binaryData) {\n  throw new Error('no data found');\n}\n\n// Return the binary data with the new name\nreturn [{ binary: { [newBinaryPropertyName]: binaryData } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11248,
+        2160
+      ],
+      "id": "6efb5760-cd73-440f-a396-a4eb0725bf5c",
+      "name": "Binary Conversion Code"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -11024,
+        2064
+      ],
+      "id": "11e6ce6d-2c0f-4cfb-b8d7-068545352ef7",
+      "name": "Combining Images"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -8528,
+        1456
+      ],
+      "id": "a6029c96-0ce2-4947-817e-5048e4a59928",
+      "name": "Combining Prompt And Ref. Images"
+    },
+    {
+      "parameters": {
+        "name": "={{ $today.format('yyyy-MM-dd') }} - {{ $('Platform Configuration Hub').item.json.platform_name }} - {{ $('Combining Prompt And Ref. Images').item.json.caption_full.substring(0, 50) }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Platform Configuration Hub').item.json.drive.folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -7648,
+        1456
+      ],
+      "id": "1cc27182-e6c8-4ba8-873c-990ad593b5bc",
+      "name": "Upload file To Drive",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "O1LoiWKlENbzpUsx",
+          "name": "ElectroTech Cred"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "MULTI-PLATFORM POSTING LOGIC",
+        "height": 912,
+        "width": 976,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -6656,
+        768
+      ],
+      "id": "fd1145ca-4de4-4dfb-bba3-046364ff8aec",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "Image Generation Logic",
+        "height": 304,
+        "width": 688,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -8592,
+        1360
+      ],
+      "id": "a34d5c3d-db57-46ca-9b0f-d5ca7535aaec",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/edits",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-image-1.5"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.image_prompt }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "image[]",
+              "inputDataFieldName": "data"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "image[]",
+              "inputDataFieldName": "data_1"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8304,
+        1456
+      ],
+      "id": "52014c89-7171-44a5-adf4-c3e286bce37b",
+      "name": "Image Generater Model",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.data.Decision }}",
+              "value2": "Review"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -7392,
+        1968
+      ],
+      "id": "39e4bd5c-1752-44cc-8865-7abb47a607ff",
+      "name": "Rework?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.data.Decision }}",
+              "value2": "Cancel"
+            }
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -7088,
+        1456
+      ],
+      "id": "7667a3db-8467-4443-a32f-e714c9a38a34",
+      "name": "Cancel?"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $('Platform Configuration Hub').item.json.slack.approval_channel }}",
+          "mode": "id"
+        },
+        "message": "=Here is the {{ $('Platform Configuration Hub').item.json.platform_name }} Post for Date: {{ $today.format('yyyy-MM-dd') }}\n\n📱 Platform: {{ $('Platform Configuration Hub').item.json.platform_display }}\n\nPost Content:\n{{ $('Prompt Enhancer at Base Stage').item.json.caption_full }}\n\n{{ $('Prompt Enhancer at Base Stage').item.json.hashtags }}\n\n",
+        "responseType": "customForm",
+        "defineForm": "json",
+        "jsonOutput": "[\n  {\n    \"fieldLabel\": \"Decision\",\n    \"fieldType\": \"radio\",\n    \"requiredField\": true,\n    \"fieldOptions\": {\n      \"values\": [\n        {\n          \"option\": \"Approve\"\n        },\n        {\n          \"option\": \"Review\"\n        },\n        {\n          \"option\": \"Cancel\"\n        }\n      ]\n    }\n  },\n  {\n    \"fieldLabel\": \"Review Category\",\n    \"fieldType\": \"dropdown\",\n    \"requiredField\": false,\n    \"fieldOptions\": {\n      \"values\": [\n        {\n          \"option\": \"Visual / Image Quality\"\n        },\n        {\n          \"option\": \"Branding & Compliance\"\n        },\n        {\n          \"option\": \"Event / Religious Alignment\"\n        },\n        {\n          \"option\": \"Marketing Copy / Caption\"\n        },\n        {\n          \"option\": \"CTA / Conversion Focus\"\n        },\n        {\n          \"option\": \"Overall Direction\"\n        }\n      ]\n    }\n  },\n  {\n    \"fieldLabel\": \"Predefined Feedback Options\",\n    \"fieldType\": \"checkbox\",\n    \"requiredField\": false,\n    \"fieldOptions\": {\n      \"values\": [\n        {\n          \"option\": \"Adjust lighting to be more realistic and physically plausible\"\n        },\n        {\n          \"option\": \"Improve alignment with brand colors (Navy Blue / Yellow)\"\n        },\n        {\n          \"option\": \"Strengthen product problem-solution clarity\"\n        },\n        {\n          \"option\": \"Make visuals more Pakistani corporate / industrial\"\n        },\n        {\n          \"option\": \"Refine event or Friday tone (more respectful / subtle)\"\n        },\n        {\n          \"option\": \"Reduce marketing exaggeration, keep it factual\"\n        },\n        {\n          \"option\": \"Improve logo visibility and placement\"\n        },\n        {\n          \"option\": \"Enhance typography clarity and positioning\"\n        }\n      ]\n    }\n  },\n  {\n    \"fieldLabel\": \"Image-Specific Adjustments\",\n    \"fieldType\": \"checkbox\",\n    \"requiredField\": false,\n    \"fieldOptions\": {\n      \"values\": [\n        {\n          \"option\": \"Adjust camera angle or focal length\"\n        },\n        {\n          \"option\": \"Improve depth of field realism\"\n        },\n        {\n          \"option\": \"Refine shadows and reflections\"\n        },\n        {\n          \"option\": \"Correct environment or spatial consistency\"\n        }\n      ]\n    }\n  },\n  {\n    \"fieldLabel\": \"Caption / Hashtag Adjustments\",\n    \"fieldType\": \"checkbox\",\n    \"requiredField\": false,\n    \"fieldOptions\": {\n      \"values\": [\n        {\n          \"option\": \"Make caption more professional and B2B-focused\"\n        },\n        {\n          \"option\": \"Align caption more strongly with event or weekday logic\"\n        },\n        {\n          \"option\": \"Improve CTA clarity without sounding aggressive\"\n        },\n        {\n          \"option\": \"Refine hashtags for Pakistani market relevance\"\n        }\n      ]\n    }\n  },\n  {\n    \"fieldLabel\": \"Custom Review Feedback\",\n    \"fieldType\": \"textarea\",\n    \"placeholder\": \"Optional: add any specific instructions or clarifications not covered above\",\n    \"requiredField\": false\n  }\n]\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -7424,
+        1456
+      ],
+      "id": "eac5d420-bc4a-44aa-be68-1608f5f574cd",
+      "name": "Send message and wait for response",
+      "webhookId": "35c8ad11-cbad-4bd9-a44f-ba979f320947",
+      "credentials": {
+        "slackApi": {
+          "id": "Fq582S22pPJEY6vb",
+          "name": "ElectroTech Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.data.Decision }}",
+              "value2": "Approve"
+            }
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -7088,
+        992
+      ],
+      "id": "fcba793a-b95d-4699-afb0-eabd6e376624",
+      "name": "Approved"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $('Platform Configuration Hub').item.json.slack.approval_channel }}",
+          "mode": "id"
+        },
+        "text": "=✅ {{ $('Platform Configuration Hub').item.json.platform_name }} Post Successfully Published!\n\n📱 Platform: {{ $('Platform Configuration Hub').item.json.platform_display }}\n📅 Date: {{ $today.format('yyyy-MM-dd') }}\n\n📝 Caption:\n{{ $('Combining Prompt And Ref. Images').item.json.caption_full }}\n\n🏷️ Hashtags:\n{{ $('Combining Prompt And Ref. Images').item.json.hashtags }}\n",
+        "otherOptions": {
+          "includeLinkToWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -5888,
+        800
+      ],
+      "id": "9f6c5020-a7b9-4fb4-8d24-d6dfe4727a85",
+      "name": "Send a Success message",
+      "webhookId": "a16649b0-8094-47d6-948d-4d1ae9b6ab05",
+      "credentials": {
+        "slackApi": {
+          "id": "Fq582S22pPJEY6vb",
+          "name": "ElectroTech Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Platform Configuration Hub').item.json.sheets.document_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Platform Configuration Hub').item.json.sheets.sheet_name }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Publish Date": "={{ $today.format('yyyy-MM-dd') }}",
+            "image_prompt": "={{ $('Prompt Enhancer at Base Stage').item.json.image_prompt }}",
+            "caption": "={{ $('Prompt Enhancer at Base Stage').item.json.caption_full }}",
+            "hashtags": "={{ $('Prompt Enhancer at Base Stage').item.json.hashtags }}",
+            "status": "published",
+            "image_link": "=-"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Publish Date",
+              "displayName": "Publish Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "image_prompt",
+              "displayName": "image_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "caption",
+              "displayName": "caption",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hashtags",
+              "displayName": "hashtags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "image_link",
+              "displayName": "image_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -5888,
+        992
+      ],
+      "id": "8c0bf97d-f650-4108-8d71-e27d6917bc7c",
+      "name": "Success Record Saving in Sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "wQadn7hPdz5HTwSd",
+          "name": "ElectroTech GoogleSheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $('Platform Configuration Hub').item.json.slack.approval_channel }}",
+          "mode": "id"
+        },
+        "text": "=❌ {{ $('Platform Configuration Hub').item.json.platform_name }} Post Successfully Canceled!\n\n📱 Platform: {{ $('Platform Configuration Hub').item.json.platform_display }}\n📅 Date: {{ $today.format('yyyy-MM-dd') }}\n\n📝 Caption:\n{{ $('Combining Prompt And Ref. Images').item.json.caption_full }}\n\n🏷️ Hashtags:\n{{ $('Combining Prompt And Ref. Images').item.json.hashtags }}\n",
+        "otherOptions": {
+          "includeLinkToWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -6864,
+        1360
+      ],
+      "id": "505acff6-5d30-4a21-b8d0-3b8ca71ccbbc",
+      "name": "Send a Cancel message",
+      "webhookId": "16d4ab40-3c93-4e19-adab-26f3196c0cff",
+      "credentials": {
+        "slackApi": {
+          "id": "Fq582S22pPJEY6vb",
+          "name": "ElectroTech Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Platform Configuration Hub').item.json.sheets.document_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Platform Configuration Hub').item.json.sheets.sheet_name }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Publish Date": "={{ $today.format('yyyy-MM-dd') }}",
+            "Platform": "={{ $('Platform Configuration Hub').item.json.platform_name }}",
+            "image_prompt": "={{ $('Prompt Enhancer at Base Stage').item.json.image_prompt }}",
+            "caption": "={{ $('Prompt Enhancer at Base Stage').item.json.caption_full }}",
+            "hashtags": "={{ $('Prompt Enhancer at Base Stage').item.json.hashtags }}",
+            "status": "canceled",
+            "image_link": "=-"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Publish Date",
+              "displayName": "Publish Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Platform",
+              "displayName": "Platform",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "image_prompt",
+              "displayName": "image_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "caption",
+              "displayName": "caption",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hashtags",
+              "displayName": "hashtags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "image_link",
+              "displayName": "image_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -6864,
+        1552
+      ],
+      "id": "9b058eff-6e82-4a0f-b5c0-eac9524bc4d6",
+      "name": "Cancel Record Saving in Sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "wQadn7hPdz5HTwSd",
+          "name": "ElectroTech GoogleSheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -6944,
+        1792
+      ],
+      "id": "6dd8555d-5030-43c3-88ca-d919250c0616",
+      "name": "Combine Old Prompt + User Feedback"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=PREVIOUSLY GENERATED OUTPUT:\n{{ $json.text }}\n\nUSER / SLACK FEEDBACK:\n{{ $json.feedback_compiled }}\n\nINSTRUCTIONS:\n– Refine ONLY the generated output based on the feedback.\n– Modify ONLY the fields explicitly mentioned.\n– Preserve JSON structure and all enforced rules.\n– If feedback is invalid or non-actionable, return the output unchanged."
+            },
+            {
+              "role": "system",
+              "content": "You are a STRICT OUTPUT REFINEMENT ENGINE for ElectroTech Solar.\n\nYour ONLY responsibility is to refine a PREVIOUSLY GENERATED OUTPUT\n(Image Prompt, Marketing Copy, Captions, Hashtags, etc.)\nbased EXCLUSIVELY on explicit user feedback.\n\nTHIS IS A HIGH-STAKES PRODUCTION REFINEMENT.\nANY UNAUTHORIZED CHANGE = SYSTEM FAILURE.\n\n========================\nABSOLUTE REFINEMENT SCOPE\n========================\nYou MUST refine ONLY the GENERATED OUTPUT CONTENT.\nYou MUST NOT modify, reinterpret, or recreate the SYSTEM PROMPT logic.\n\nYou are NOT generating from scratch.\nYou are PATCHING an existing result.\n\n========================\nIMMUTABLE RULES\n========================\n1. You MUST preserve the ORIGINAL OUTPUT STRUCTURE exactly.\n   – Same JSON keys\n   – Same nesting\n   – Same ordering\n   – Same schema\n\n2. You MUST preserve ALL enforced rules from the original system:\n   – Branding rules\n   – Event logic\n   – Contact details enforcement\n   – Spatial consistency\n   – Camera, lighting, and tone logic\n   – Pakistani market relevance\n\n3. You MUST apply changes ONLY where feedback explicitly requires refinement.\n   – Treat feedback as a PRECISE PATCH\n   – NOT a rewrite\n   – NOT an enhancement pass\n   – NOT a creative improvement\n\n4. You MUST NOT change:\n   – Any field not mentioned in feedback\n   – Any compliant element\n   – Any correct logic_trace unless feedback explicitly targets it\n\n5. You MUST NOT introduce:\n   – New ideas\n   – New marketing angles\n   – New styles\n   – New assumptions\n   – New hashtags unless feedback explicitly asks\n\n========================\nFEEDBACK HANDLING LOGIC\n========================\n– If feedback targets IMAGE PROMPT → modify image_prompt ONLY\n– If feedback targets COPY → modify marketing_copy fields ONLY\n– If feedback targets HASHTAGS → modify hashtags ONLY\n– If feedback targets MULTIPLE fields → modify ONLY those fields\n\nIf feedback is:\n– Vague\n– Subjective\n– Conflicting with enforced rules\n– Asking for prohibited changes\n\n→ IGNORE the feedback and return the output unchanged.\n\n========================\nVALIDATION CHECK (MANDATORY)\n========================\nBefore outputting, internally confirm:\n– Every change is directly traceable to feedback\n– No unrelated text was altered\n– No rule was weakened or bypassed\n– JSON validity is intact\n\nIF NO VALID REFINEMENT WAS POSSIBLE:\n→ Return the ORIGINAL OUTPUT exactly as received.\n\n========================\nFAILURE CONDITIONS\n========================\nAny of the following = SYSTEM FAILURE:\n– Editing fields not mentioned in feedback\n– Rewriting instead of refining\n– Improving quality without instruction\n– Structural changes\n– Schema changes\n– Adding or removing keys\n\n========================\nFINAL OUTPUT RULES (ABSOLUTE)\n========================\nOutput ONE raw JSON object only.\nNo markdown.\nNo explanations.\nNo commentary.\nNo extra text.\n"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        -6736,
+        1792
+      ],
+      "id": "02988060-f16f-4f17-bc8f-afb4af5b596c",
+      "name": "Refinement Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "TwjdtXCF59ohdZkL",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Extract the text returned by the model\nconst text =\n  items[0].json.output[0].content[0].text;\n\n// 2. Return it EXACTLY in the required structure\nreturn [\n  {\n    json: {\n      text: text\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6416,
+        1792
+      ],
+      "id": "54ce2a84-e9e8-4360-bff0-eed3e82cbdb5",
+      "name": "Parsing into processable format"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. GET RAW TEXT SAFELY\nconst raw = items[0]?.json?.text;\n\nif (!raw || typeof raw !== 'string') {\n  return [{\n    json: {\n      error: 'No valid text field found',\n      raw\n    }\n  }];\n}\n\n// 2. CLEAN COMMON LLM WRAPPERS & MARKDOWN\nlet clean = raw\n  .replace(/```json/gi, '')\n  .replace(/```/g, '')\n  .trim();\n\n// 3. PARSE JSON SAFELY\nlet parsed;\ntry {\n  parsed = JSON.parse(clean);\n} catch (err) {\n  return [{\n    json: {\n      error: 'JSON parse failed',\n      reason: err.message,\n      raw: clean\n    }\n  }];\n}\n\n// 4. NORMALIZE CAPTION OBJECT (caption_data vs marketing_copy)\nconst cap =\n  parsed.caption_data ||\n  parsed.marketing_copy ||\n  {};\n\n// 5. EXTRACT CAPTION PARTS DEFENSIVELY\nconst hook = cap.hook || '';\nconst body = cap.body || '';\nconst footer = cap.footer || '';\n\n// Avoid empty spacing\nconst caption_full = [hook, body, footer]\n  .filter(part => typeof part === 'string' && part.trim() !== '')\n  .join('\\n\\n');\n\n// 6. NORMALIZE HASHTAGS (ARRAY OR STRING)\nlet hashtags = cap.hashtags || '';\nif (Array.isArray(hashtags)) {\n  hashtags = hashtags.join(' ');\n}\nhashtags = typeof hashtags === 'string' ? hashtags.trim() : '';\n\n// 7. IMAGE PROMPT PRIORITY (MJ > DALLE)\nconst image_prompt =\n  parsed.image_prompt ||\n  parsed.midjourney_prompt ||\n  parsed.dalle_prompt ||\n  '';\n\n// 8. NEGATIVE PROMPT SAFE FALLBACK\nconst negative_prompt = parsed.negative_prompt || '';\n\n// 9. OVERLAY TEXT NORMALIZATION\nconst overlay_text =\n  parsed.overlay_text_content ||\n  parsed.text_overlay_content ||\n  '';\n\n// 10. META / LOGIC TRACE (FOR DEBUGGING)\nconst meta =\n  parsed.logic_trace ||\n  parsed.logic_verification ||\n  parsed.meta_strategy ||\n  {};\n\n// 11. FINAL STANDARDIZED OUTPUT\nreturn [{\n  json: {\n    image_prompt,\n    negative_prompt,\n    caption_full,\n    hashtags,\n    text_overlay_content: overlay_text,\n    meta_strategy: meta\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6192,
+        1792
+      ],
+      "id": "8aa3818e-6662-42fc-8ebd-67d8e3177d2d",
+      "name": "Prompt Enhancer at Refinement Stage"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. GET RAW TEXT SAFELY\nconst raw = items[0]?.json?.text;\n\nif (!raw || typeof raw !== 'string') {\n  return [{\n    json: {\n      error: 'No valid text field found',\n      raw\n    }\n  }];\n}\n\n// 2. CLEAN COMMON LLM WRAPPERS & MARKDOWN\nlet clean = raw\n  .replace(/```json/gi, '')\n  .replace(/```/g, '')\n  .trim();\n\n// 3. PARSE JSON SAFELY\nlet parsed;\ntry {\n  parsed = JSON.parse(clean);\n} catch (err) {\n  return [{\n    json: {\n      error: 'JSON parse failed',\n      reason: err.message,\n      raw: clean\n    }\n  }];\n}\n\n// 4. NORMALIZE CAPTION OBJECT (caption_data vs marketing_copy)\nconst cap =\n  parsed.caption_data ||\n  parsed.marketing_copy ||\n  {};\n\n// 5. EXTRACT CAPTION PARTS DEFENSIVELY\nconst hook = cap.hook || '';\nconst body = cap.body || '';\nconst footer = cap.footer || '';\n\n// Avoid empty spacing\nconst caption_full = [hook, body, footer]\n  .filter(part => typeof part === 'string' && part.trim() !== '')\n  .join('\\n\\n');\n\n// 6. NORMALIZE HASHTAGS (ARRAY OR STRING)\nlet hashtags = cap.hashtags || '';\nif (Array.isArray(hashtags)) {\n  hashtags = hashtags.join(' ');\n}\nhashtags = typeof hashtags === 'string' ? hashtags.trim() : '';\n\n// 7. IMAGE PROMPT PRIORITY (MJ > DALLE)\nconst image_prompt =\n  parsed.image_prompt ||\n  parsed.midjourney_prompt ||\n  parsed.dalle_prompt ||\n  '';\n\n// 8. NEGATIVE PROMPT SAFE FALLBACK\nconst negative_prompt = parsed.negative_prompt || '';\n\n// 9. OVERLAY TEXT NORMALIZATION\nconst overlay_text =\n  parsed.overlay_text_content ||\n  parsed.text_overlay_content ||\n  '';\n\n// 10. META / LOGIC TRACE (FOR DEBUGGING)\nconst meta =\n  parsed.logic_trace ||\n  parsed.logic_verification ||\n  parsed.meta_strategy ||\n  {};\n\n// 11. FINAL STANDARDIZED OUTPUT\nreturn [{\n  json: {\n    image_prompt,\n    negative_prompt,\n    caption_full,\n    hashtags,\n    text_overlay_content: overlay_text,\n    meta_strategy: meta\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8752,
+        1456
+      ],
+      "id": "decae7c8-6686-48a1-99a8-86660934cfbe",
+      "name": "Prompt Enhancer at Base Stage"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -5984,
+        2048
+      ],
+      "id": "d88d6c14-06fe-4b2e-bfaa-48d77cea31c8",
+      "name": "Combining Prompt And Ref. Images at Refinement Stage"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/edits",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-image-1.5"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.image_prompt }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "image[]",
+              "inputDataFieldName": "data"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "image[]",
+              "inputDataFieldName": "data_1"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5728,
+        2048
+      ],
+      "id": "19357d37-b17b-449f-9200-b865ff7a753e",
+      "name": "Image Generater Model at Refinement Stage"
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "data[0].b64_json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -5440,
+        2048
+      ],
+      "id": "61c38ca0-639d-459d-8df9-64b9016561f0",
+      "name": "Convert Refined Image to File"
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "data[0].b64_json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -8080,
+        1456
+      ],
+      "id": "16582ffd-c6e2-4d1c-85f8-cb58f0d94c7e",
+      "name": "Convert Base Image to File",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "Refinement pipeline",
+        "height": 512,
+        "width": 2160
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -7424,
+        1744
+      ],
+      "typeVersion": 1,
+      "id": "2876a661-85e6-41e0-bef0-6b7b815b8cf0",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code Node (JavaScript)\n\nconst input = $json.data; // <-- FIX: read from data object\n\nconst parts = [];\n\n// Decision\nif (input.Decision) {\n  parts.push(`Decision: ${input.Decision}`);\n}\n\n// Review Category\nif (input[\"Review Category\"]) {\n  parts.push(`Review Category: ${input[\"Review Category\"]}`);\n}\n\n// Predefined Feedback Options\nif (\n  Array.isArray(input[\"Predefined Feedback Options\"]) &&\n  input[\"Predefined Feedback Options\"].length > 0\n) {\n  parts.push(\n    `Predefined Feedback:\\n- ${input[\"Predefined Feedback Options\"].join(\"\\n- \")}`\n  );\n}\n\n// Image-Specific Adjustments\nif (\n  Array.isArray(input[\"Image-Specific Adjustments\"]) &&\n  input[\"Image-Specific Adjustments\"].length > 0\n) {\n  parts.push(\n    `Image Adjustments:\\n- ${input[\"Image-Specific Adjustments\"].join(\"\\n- \")}`\n  );\n}\n\n// Caption / Hashtag Adjustments\nif (\n  Array.isArray(input[\"Caption / Hashtag Adjustments\"]) &&\n  input[\"Caption / Hashtag Adjustments\"].length > 0\n) {\n  parts.push(\n    `Caption & Hashtag Adjustments:\\n- ${input[\"Caption / Hashtag Adjustments\"].join(\"\\n- \")}`\n  );\n}\n\n// Custom free-text feedback\nif (\n  input[\"Custom Review Feedback\"] &&\n  input[\"Custom Review Feedback\"].trim() !== \"\"\n) {\n  parts.push(\n    `Additional Instructions:\\n${input[\"Custom Review Feedback\"].trim()}`\n  );\n}\n\n// Final compiled feedback\nconst feedback_compiled = parts.join(\"\\n\\n\");\n\nreturn [\n  {\n    feedback_compiled\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7168,
+        1952
+      ],
+      "id": "a2abe0d2-fbce-44ac-a3e7-f0f1f49047dc",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You must execute the SYSTEM PROMPT without deviation.\n\n==================================================\nTARGET PLATFORM (CRITICAL)\n==================================================\nPlatform: {{$('Platform Configuration Hub').first().json.platform_name }}\n==================================================\nPLATFORM-SPECIFIC CONTENT SPECIFICATIONS\n==================================================\nMax Caption Length: {{ $('Platform Configuration Hub').first().json.content_specs.max_caption_length }}\nOptimal Caption Length: {{ $('Platform Configuration Hub').first().json.content_specs.optimal_caption_length }}\nMax Hashtags: {{ $('Platform Configuration Hub').first().json.content_specs.max_hashtags }}\nRecommended Hashtags: {{ $('Platform Configuration Hub').first().json.content_specs.recommended_hashtags }}\nImage Aspect Ratio: {{ $('Platform Configuration Hub').first().json.content_specs.image_aspect_ratio }}\nImage Dimensions: {{ $('Platform Configuration Hub').first().json.content_specs.image_dimensions }}\nLink in Caption Allowed: {{ $('Platform Configuration Hub').first().json.content_specs.link_in_caption }}\nEmoji Friendly: {{ $('Platform Configuration Hub').first().json.content_specs.emoji_friendly }}\n\n==================================================\nPLATFORM-SPECIFIC WRITING GUIDELINES (MUST FOLLOW)\n==================================================\n{{ $('Platform Configuration Hub').first().json.platform_writing_guidelines }}\n\n==================================================\nINPUT DATA\n==================================================\nTarget Date: {{ $item(0).$json.extracted_date || $now.format('yyyy-MM-dd') }}\n\nProduct ID (External Lock): {{ $json.product_id || \"none\" }}\n\nWeekday Flags:\n– Weekday: {{ $item(0).$json.weekday }}\n– Friday: {{ $item(0).$json.isFriday }}\n– Weekend: {{ $item(0).$json.isWeekend }}\n\nEvent Data: {{ JSON.stringify($json.combinedEvents) }}\nIslamic Event: {{ JSON.stringify($json.islamicEvent) }}\nPatriotic Context: {{ $json.patrioticEvent }}\n\nPost Type: {{ $json.postType }}\nPriority: {{ $json.priority }}\n\n==================================================\nFINAL RESPONSE FORMAT (MANDATORY)\n==================================================\n{\n  \"logic_trace\": {\n    \"platform\": \"{{ $('Platform Configuration Hub').first().json.platform_name }}\",\n    \"math\": \"...\",\n    \"product_lock\": \"...\",\n    \"event_mode\": \"...\",\n    \"weekday_context\": \"...\",\n    \"branding_check\": \"ElectroTech branding enforced\",\n    \"platform_optimization\": \"Content optimized for {{ $('Platform Configuration Hub').first().json.platform_name }} best practices\"\n  },\n  \"image_prompt\": \"...\",\n  \"negative_prompt\": \"cartoon, illustration, 3d render, painting, drawing, watermark, blur, low quality, creative deviation, hallucination\",\n  \"marketing_copy\": {\n    \"hook\": \"...\",\n    \"wisdom_quote\": \"...\",\n    \"body\": \"...\",\n    \"hashtags\": \"...\"\n  }\n}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=You are the Executive Creative Director, Compliance Authority, and Lead Prompt Architect for ElectroTech Solar.\n\nTHIS IS A HIGH-STAKES, PRODUCTION SYSTEM.\nALL INSTRUCTIONS ARE ABSOLUTE.\nNO CREATIVE INTERPRETATION.\nNO ASSUMPTIONS.\nNO OMISSIONS.\nNO EXCEPTIONS.\n\nYou operate under STRICT DETERMINISM.\nYour output defines the final visual and brand reality.\n\n========================\nMULTI-PLATFORM AWARENESS (CRITICAL)\n========================\nYou are generating content for: {{ $('Platform Configuration Hub').first().json.platform_name }}\n\nYou MUST tailor ALL outputs (captions, hashtags, tone, CTA style) \nto match the specific platform's best practices and audience expectations.\n\nPLATFORM-SPECIFIC RULES:\n{{ $('Platform Configuration Hub').first().json.platform_writing_guidelines }}\n\nCONTENT SPECIFICATIONS FOR THIS PLATFORM:\n- Maximum Caption Length: {{ $('Platform Configuration Hub').first().json.content_specs.max_caption_length }} characters\n- Optimal Caption Length: {{ $('Platform Configuration Hub').first().json.content_specs.optimal_caption_length }} characters  \n- Maximum Hashtags: {{ $('Platform Configuration Hub').first().json.content_specs.max_hashtags }}\n- Recommended Hashtags: {{ $('Platform Configuration Hub').first().json.content_specs.recommended_hashtags }}\n- Image Aspect Ratio: {{ $('Platform Configuration Hub').first().json.content_specs.image_aspect_ratio }}\n- Links Allowed in Caption: {{ $('Platform Configuration Hub').first().json.content_specs.link_in_caption }}\n- Emoji Usage: {{ $('Platform Configuration Hub').first().json.content_specs.emoji_friendly ? 'Encouraged' : 'Minimal/Professional' }}\n\nYou MUST ensure:\n1. Caption length stays within platform limits\n2. Hashtag count matches platform recommendations\n3. Tone matches platform audience (professional for LinkedIn, conversational for Facebook, visual-first for Instagram)\n4. CTA style is platform-appropriate\n5. Image dimensions match platform specifications\n\n========================\nGLOBAL ENFORCEMENT RULES\n========================\n1. You MUST execute ALL steps in order.\n2. You MUST NOT skip, soften, merge, or reinterpret any rule.\n3. You MUST NOT hallucinate or guess missing data.\n4. If data is missing, you must still respect all constraints and produce a valid output.\n5. If instructions conflict, priority order is:\n   Platform Best Practices > Brand Safety > Religious/Event Rules > Product Lock > Spatial Rules > Visual Quality > Marketing Aesthetics.\n\n========================\nCORE EXPERTISE (LOCKED)\n========================\nYou are an expert in:\n– Ultra-realistic commercial cinematography\n– Camera optics & lens physics\n– Lighting science & color psychology\n– Pakistani corporate, B2B & industrial advertising\n– Brand-safe AI prompt enforcement\n– Deterministic automation logic\n– Multi-platform social media marketing (Facebook, LinkedIn, Instagram, Twitter, etc.)\n\n========================\nINPUT DATA (ALWAYS PRESENT)\n========================\nweekday\nisFriday\nisWeekend\nislamicEvent\npatrioticEvent\ncombinedEvents\npostType\npriority\nproduct_id (optional external lock)\nplatform (target social media platform)\nplatform_writing_guidelines (platform-specific best practices)\ncontent_specs (platform-specific content specifications)\n\nInputs are NEVER ignored.\nThey are evaluated conditionally.\n\n========================\nSTEP 1 — PRODUCT & SUBJECT LOCK (ABSOLUTE)\n========================\nIf product_id is provided:\n→ Product is LOCKED and FINAL.\n\nDate-based verification MUST still be calculated:\n– Read current date\n– Extract day\n– Take last digit\n– Map product\n\nIf mismatch:\n→ Keep provided product\n→ Mark as \"verified but overridden\"\n\nNO SECONDARY PRODUCTS.\nNO ACCESSORIES AS SUBJECTS.\n\n========================\nSTEP 1A — DAILY PRODUCT & POST SELECTION LOGIC (ABSOLUTE)\n========================\nThis step executes ONLY if product_id is NOT provided.\n\nPurpose:\nDeterministically decide:\n1) WHICH ElectroTech product/service to post today\n2) WHAT type of post to generate (product, solution, or system showcase)\n\nInputs used (MANDATORY):\nweekday\nisFriday\nisWeekend\npostType\npriority\n\nCompany Scope (LOCKED PRODUCT UNIVERSE):\nElectroTech offerings include ONLY:\n– Solar Panels\n– Solar Inverters (On-Grid / Off-Grid / Hybrid)\n– Lithium-Ion Batteries\n– Solar Structures\n– Solar Fitting Accessories\n– Solar Tube Well Systems\n– VFD (Variable Frequency Drives)\n– Electric Fence Systems\n– Home Automation\n– Industrial Automation\n– I.T. Services\n– CCTV Security Systems\n– ERP Services\n\nNo products outside this list are EVER allowed.\n\n--------------------------------\nA) WEEKDAY PRODUCT ROTATION LOGIC\n--------------------------------\nIf isWeekend = false AND isFriday = false:\n\nUse weekday-based deterministic rotation:\n\nMonday:\n→ Industrial / Commercial focus\n→ Allowed products:\n   - Solar Panels (Commercial / Industrial)\n   - Industrial Automation\n   - VFDs\n   - ERP\n\nTuesday:\n→ Energy efficiency & infrastructure\n→ Allowed products:\n   - Solar Inverters\n   - Lithium Batteries\n   - Solar Structures\n\nWednesday:\n→ Security & protection systems\n→ Allowed products:\n   - Electric Fence System\n   - CCTV Security System\n\nThursday:\n→ Integrated solutions & reliability\n→ Allowed products:\n   - Commercial Solar Systems (Panels + Inverter implied, ONE primary subject only)\n   - Solar Batteries\n   - Industrial Automation\n\n--------------------------------\nB) FRIDAY LOGIC (SUBTLE & DIGNIFIED)\n--------------------------------\nIf isFriday = true:\n\n→ Avoid aggressive sales or technical complexity\n→ Allowed products:\n   - Solar Panels (general reliability angle)\n   - Solar Batteries\n   - Home Automation\n→ Tone: Trust, stability, long-term value\n\n--------------------------------\nC) WEEKEND LOGIC (LIFESTYLE / HUMAN-COMPATIBLE)\n--------------------------------\nIf isWeekend = true:\n\n→ Lifestyle warmth allowed\n→ Allowed products:\n   - Residential Solar Systems\n   - Home Automation\n   - CCTV (home security angle)\n\n--------------------------------\nD) PRIORITY OVERRIDE (LIMITED)\n--------------------------------\nIf priority = HIGH:\n→ Select the MOST BUSINESS-CRITICAL product from the allowed list\n→ Favor:\n   - Commercial Solar\n   - Industrial Automation\n   - ERP\nNo override is applied if priority = LOW or NORMAL.\n\n--------------------------------\nE) FINAL PRODUCT SELECTION RULES\n--------------------------------\n1. Select ONE product or system only.\n2. No bundles unless explicitly defined as a single system (e.g., \"Commercial Solar System\").\n3. Once selected, this product becomes SUBJECT-LOCKED.\n4. All subsequent steps (events, lighting, captions, hashtags) MUST align with this product.\n5. Record selection reasoning internally for meta_strategy output.\n\n========================\nSTEP 2 — EVENT & RELIGIOUS PRIORITY (HIGHEST)\n========================\nEvaluate combinedEvents FIRST.\n\nIF combinedEvents.length > 0:\n→ EVENT MODE = ACTIVE\n→ Marketing styles DISABLED\n→ Scene, lighting, colors, and mood MUST visually reflect the event.\n\nEvent Types:\nA) CELEBRATORY (Eid, Independence Day, National Events)\n– High-key lighting\n– Golden hour / festive volumetrics\n– Emerald green, gold, warm amber\n– Cultural Pakistani environment\n\nB) SOLEMN (Ashura, memorials)\n– Low-key chiaroscuro\n– Muted charcoal, slate blue, silver\n– Respectful shadows\n– No gloss, no hero lighting\n\nSTRICT PROHIBITIONS IN EVENT MODE:\n– No studio white\n– No luxury gloss\n– No mixed moods\n– No marketing exaggeration\n\n========================\nSTEP 3 — WEEKDAY / FRIDAY / WEEKEND LOGIC\n========================\nWeekday:\n– Professional, efficiency-focused\n– Clean lighting\n– Executive tone\n\nFriday:\n– Subtle dignity\n– Calm, grounded lighting\n– No aggressive marketing tone\n\nWeekend:\n– Lifestyle warmth\n– Relaxed but premium lighting\n– Human presence allowed if compliant\n\nThis logic affects:\n– Lighting intensity\n– Camera distance\n– Emotional tone\n– Caption language\n\n========================\nSTEP 4 — MARKETING MODE (ONLY IF NO EVENT)\n========================\nIF EVENT MODE = INACTIVE:\nSelect ONE mode only.\n\nA) HERO SHOWCASE\n– Premium\n– Studio-grade lighting\n– Apple-clean aesthetic\n– 85mm or 100mm lens\n– Perfect symmetry\n\nB) SOLUTION STORY\n– Pain → Relief contrast\n– Chiaroscuro lighting\n– Single motivated light source (product)\n– 35mm cinematic lens\n– Human interaction allowed (brand-compliant)\n\n========================\nSTEP 5 — SPATIAL CONSISTENCY (NON-NEGOTIABLE)\n========================\nProduct placement MUST remain physically, culturally, and commercially realistic.\nCreativity is allowed ONLY within valid spatial categories.\n\n--------------------------------\nA) INDOOR / BUILT-ENVIRONMENT PRODUCTS\n--------------------------------\n(Automation, ERP, IT, Inverters, Batteries, Control Systems)\n\nAllowed environments:\n– Corporate offices (modern Pakistani business interiors)\n– Industrial control rooms\n– Manufacturing facilities\n– Commercial buildings\n– Warehouses\n– Data rooms / server rooms\n– Executive meeting rooms\n– Premium residential interiors (ONLY for home automation)\n\nExamples include but are NOT limited to:\n– DHA, Bahria, Gulberg, PECHS, Blue Area\n– Export zones\n– Corporate plazas\n– Industrial estates\n\nLocation naming is OPTIONAL.\nEnvironment realism is MANDATORY.\n\n--------------------------------\nB) OUTDOOR / ENERGY / AGRICULTURAL PRODUCTS\n--------------------------------\n(Solar panels, tube wells, electric fencing, agri systems)\n\nAllowed environments:\n– Commercial rooftops\n– Industrial rooftops\n– Factories and mills\n– Cold storage facilities\n– Poultry farms\n– Dairy farms\n– Crop fields (Punjab, Sindh, KPK as context)\n– Perimeter fencing zones\n– Remote rural installations\n\nSunrise or sunset preferred where applicable.\nWeather and terrain must match Pakistani geography.\n\n--------------------------------\nC) URBAN VS RURAL LOGIC\n--------------------------------\nUrban context:\n– Commercial solar\n– Offices\n– Security systems\n– Automation\n\nRural / semi-rural context:\n– Tube wells\n– Electric fencing\n– Agricultural solar\n– VFDs for irrigation\n\n--------------------------------\nD) ABSOLUTE PROHIBITIONS\n--------------------------------\n– Indoor systems placed outdoors\n– Agricultural systems shown in offices\n– ERP, software, or IT systems shown in fields or farms\n– Luxury studio environments without contextual justification\n– Foreign or non-Pakistani environmental cues\n\n--------------------------------\nE) CONSISTENCY RULE\n--------------------------------\nOnce a spatial context is selected:\n– It MUST remain consistent across the entire image\n– Lighting, props, architecture, and materials must match that space\n– No mixed or hybrid environments\n\n========================\nSTEP 6 — BRANDING & AUTHENTICITY (CRITICAL)\n========================\nGeneric products are FORBIDDEN.\n\nElectroTech branding MUST be visible:\n– Laser-etched metal OR\n– Silk-screened glass OR\n– Embossed industrial nameplate\n\nBrand colors (MANDATORY):\n– Navy Blue (#001F3F)\n– Yellow (#FFD700)\n\nHuman Rule:\nIf ANY human appears:\n– ElectroTech technician ONLY\n– Navy & Yellow vest\n– Visible ElectroTech Solar badge\n\n========================\nSTEP 7 — CAMERA, LIGHTING & COLOR (EPIC QUALITY)\n========================\nCamera:\n– Real lenses only (35mm / 50mm / 85mm / 100mm)\n– Physically accurate depth of field\n\nLighting:\n– Physically plausible light sources\n– Natural shadows & reflections\n– No artificial glow unless justified\n\nColors:\n– Controlled palette\n– Brand colors respected\n– No oversaturation\n– No color guessing\n\n========================\nSTEP 8 — TYPOGRAPHY & UI (IF TEXT APPEARS)\n========================\nText must appear as:\n– Floating frosted-glass UI\n– Semi-transparent\n– Positioned in negative space\n– No distortion\n– Perfect legibility\n\n========================\nSTEP 9 — LOGO REFERENCE ENFORCEMENT\n========================\nONLY the provided reference logo is allowed.\nNo redraws.\nNo reinterpretation.\nNo typography changes.\n\n========================\nSTEP 9A — MANDATORY BRAND PRESENCE & MESSAGE (ABSOLUTE)\n========================\nEVERY generated image MUST include ALL of the following.\nNO EXCEPTIONS.\nFAILURE = SYSTEM FAILURE.\n\n1) OFFICIAL LOGO (MANDATORY)\n– The ElectroTech logo MUST appear in EVERY image.\n– The logo MUST be taken ONLY from the provided reference image.\n– No redraws, no stylization, no recoloring, no distortion.\n– Logo must be clear, sharp, and readable.\n\n2) PRODUCT SOLUTION STATEMENT (MANDATORY)\n– EVERY image MUST visually and textually communicate:\n  \"How this product solves a real customer problem.\"\n– This must appear as:\n  – A short solution-oriented statement OR\n  – A strong value-driven quote.\n– No generic slogans allowed.\n\n3) EVENT STATEMENT (EVENT MODE ONLY)\n– If EVENT MODE is ACTIVE:\n  – The statement MUST relate directly to the event\n    (Islamic, patriotic, or national).\n  – Tone must be respectful and aligned with the event.\n  – Product relevance must remain clear.\n\n4) BOTTOM BRAND BANNER (MANDATORY)\n– A clean, professional bottom banner MUST be present in EVERY image.\n– Banner MUST include ALL of the following:\n  – ElectroTech company name\n  – Phone number\n  – Website URL\n  – Physical address (if provided)\n– Banner must be:\n  – Horizontally aligned\n  – Non-intrusive\n  – High contrast\n  – Fully readable\n– Banner MUST NOT conflict with scene lighting or composition.\n\n5) FAILURE CONDITION\n– If ANY of the above elements are missing, unclear, or malformed,\n  the output is INVALID and considered a SYSTEM FAILURE.\n\n========================\nSTEP 9B — CONTACT DETAILS ENFORCEMENT (CONDITIONAL BUT ABSOLUTE)\n========================\nIF any image, post, banner, caption, or UI element REQUIRES or REFERENCES\ncompany contact information in ANY form:\n\n→ The following ElectroTech Solar details MUST be used EXACTLY.\n→ NO substitutions.\n→ NO omissions.\n→ NO formatting changes that reduce clarity or legibility.\n\nMANDATORY CONTACT DETAILS:\n– Company Phone: +92 315 578 6555\n– Company Website: https://etsolar.pk/\n– Company Email: sales@etsolar.pk\n– Company Address: P-225, Street #05, Raza Town, East Canal Road Faisalabad, Pakistan\n\nPROHIBITIONS:\n– No alternate phone numbers\n– No shortened URLs\n– No missing fields\n– No third-party contacts\n\nFAILURE TO APPLY THESE DETAILS WHEN REQUIRED\n= SYSTEM FAILURE.\n\n========================\nSTEP 10 — PLATFORM-SPECIFIC CAPTIONS & HASHTAGS (MANDATORY)\n========================\nCaptions and hashtags are REQUIRED and MUST be optimized for the target platform.\nFailure to generate platform-appropriate content = SYSTEM FAILURE.\n\nPLATFORM: {{ $('Platform Configuration Hub').first().json.platform_name }}\n\nRules:\n– Caption MUST respect platform character limits\n– Hashtag count MUST match platform recommendations\n– Tone MUST match platform audience expectations\n– CTA style MUST be platform-appropriate\n– Product-specific relevance maintained\n– Event-specific alignment (if applicable)\n– Pakistani market relevance\n– No generic hashtags\n– No repetition\n– Conversion-focused but respectful\n\n========================\nFINAL OUTPUT RULES (ABSOLUTE)\n========================\nOutput ONE raw JSON object only.\nNo markdown.\nNo explanations.\nNo extra text."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        -9120,
+        1488
+      ],
+      "id": "18dedc28-4cac-4cb0-9d97-507a13f1caea",
+      "name": "Base Model"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -6128,
+        976
+      ],
+      "id": "6c2b3d46-8c53-40d4-8781-9fd07e02300b",
+      "name": "Merge Platform Posts"
+    },
+    {
+      "parameters": {
+        "content": "PARALLEL PLATFORM EXECUTION\n\nWhen triggered, this workflow:\n1. Platform Iterator generates 3 items (facebook, linkedin, instagram)\n2. All 3 platforms are processed IN PARALLEL\n3. Each platform gets its own Slack approval request\n4. Approvals can happen independently\n\nTo modify active platforms:\nEdit the 'activePlatforms' array in Platform Iterator node.",
+        "height": 280,
+        "width": 380,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -12272,
+        864
+      ],
+      "id": "fb9d0aed-c83a-4827-a17a-42fa8edf8364",
+      "name": "Parallel Execution Note"
+    },
+    {
+      "parameters": {
+        "content": "PLATFORM CONFIGURATION HUB\n\nThis is the SINGLE SOURCE OF TRUTH for all platform configurations.\nTo add a new platform (Twitter, TikTok, Pinterest, etc.):\n1. Add a new entry to the platformConfigs object\n2. Define content_specs, writing_guidelines, drive, sheets, slack, and api configs\n3. Add a new platform router node in the posting section\n4. Add the platform-specific posting node\n\nThe core workflow logic remains UNCHANGED - only platform-specific values are swapped.",
+        "height": 320,
+        "width": 400,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -11872,
+        864
+      ],
+      "id": "fc6df95d-0bfc-4338-a054-8faf22653ac1",
+      "name": "Platform Config Note"
+    },
+    {
+      "parameters": {
+        "postAs": "organization",
+        "organization": "80498775",
+        "text": "={{ $('Prompt Enhancer at Base Stage').item.json.caption_full }}\n\n{{ $('Combining Prompt And Ref. Images').item.json.hashtags }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [
+        -6368,
+        1200
+      ],
+      "id": "eea6c5d7-3df6-42c8-b6bc-4bcbc81776ca",
+      "name": "Create a post",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "qDnikt7uymAhb97F",
+          "name": "ElectroTech Organization"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Auto Trigger": {
+      "main": [
+        [
+          {
+            "node": "Platform Iterator (Parallel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Platform Iterator (Parallel)": {
+      "main": [
+        [
+          {
+            "node": "Platform Configuration Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Platform Configuration Hub": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Download Reference Sample",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Download Sample Image ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Weekday-Month-Year Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Friday-Weekend Day Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Hijri-Calender-Api",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekday-Month-Year Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Friday-Weekend Day Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hijri-Date According to Pakistan": {
+      "main": [
+        [
+          {
+            "node": "Mapping Islamic Date into Georgian Date",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Combining Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Mapping Islamic Date into Georgian Date": {
+      "main": [
+        [
+          {
+            "node": "Combining Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combining Data": {
+      "main": [
+        [
+          {
+            "node": "Core Logic Combing Events and Priority Setter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hijri-Calender-Api": {
+      "main": [
+        [
+          {
+            "node": "Hijri-Date According to Pakistan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Core Logic Combing Events and Priority Setter": {
+      "main": [
+        [
+          {
+            "node": "Base Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Base Model",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Reference Sample": {
+      "main": [
+        [
+          {
+            "node": "Combining Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Sample Image ": {
+      "main": [
+        [
+          {
+            "node": "Binary Conversion Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Binary Conversion Code": {
+      "main": [
+        [
+          {
+            "node": "Combining Images",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Combining Images": {
+      "main": [
+        [
+          {
+            "node": "Combining Prompt And Ref. Images",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Combining Prompt And Ref. Images at Refinement Stage",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Combining Prompt And Ref. Images": {
+      "main": [
+        [
+          {
+            "node": "Image Generater Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload file To Drive": {
+      "main": [
+        [
+          {
+            "node": "Send message and wait for response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Generater Model": {
+      "main": [
+        [
+          {
+            "node": "Convert Base Image to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rework?": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel?": {
+      "main": [
+        [
+          {
+            "node": "Send a Cancel message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send message and wait for response": {
+      "main": [
+        [
+          {
+            "node": "Rework?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Cancel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved": {
+      "main": [
+        [
+          {
+            "node": "Is Facebook?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is LinkedIn?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a Cancel message": {
+      "main": [
+        [
+          {
+            "node": "Cancel Record Saving in Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Old Prompt + User Feedback": {
+      "main": [
+        [
+          {
+            "node": "Refinement Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refinement Model": {
+      "main": [
+        [
+          {
+            "node": "Parsing into processable format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsing into processable format": {
+      "main": [
+        [
+          {
+            "node": "Prompt Enhancer at Refinement Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Enhancer at Refinement Stage": {
+      "main": [
+        [
+          {
+            "node": "Combining Prompt And Ref. Images at Refinement Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Enhancer at Base Stage": {
+      "main": [
+        [
+          {
+            "node": "Combining Prompt And Ref. Images",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Combine Old Prompt + User Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combining Prompt And Ref. Images at Refinement Stage": {
+      "main": [
+        [
+          {
+            "node": "Image Generater Model at Refinement Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Generater Model at Refinement Stage": {
+      "main": [
+        [
+          {
+            "node": "Convert Refined Image to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Base Image to File": {
+      "main": [
+        [
+          {
+            "node": "Upload file To Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Refined Image to File": {
+      "main": [
+        [
+          {
+            "node": "Upload file To Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Combine Old Prompt + User Feedback",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Base Model": {
+      "main": [
+        [
+          {
+            "node": "Prompt Enhancer at Base Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Facebook?": {
+      "main": [
+        [
+          {
+            "node": "Facebook Posting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook Posting": {
+      "main": [
+        [
+          {
+            "node": "Merge Platform Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is LinkedIn?": {
+      "main": [
+        [
+          {
+            "node": "Create a post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Instagram?": {
+      "main": [
+        [
+          {
+            "node": "Instagram Create Media Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram Create Media Container": {
+      "main": [
+        [
+          {
+            "node": "Instagram Publish Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram Publish Media": {
+      "main": [
+        [
+          {
+            "node": "Merge Platform Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Platform Posts": {
+      "main": [
+        [
+          {
+            "node": "Send a Success message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Success Record Saving in Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a post": {
+      "main": [
+        [
+          {
+            "node": "Merge Platform Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Karachi",
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "bfbdbab5-674a-4612-99d5-21eec8336678",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a60ce22872ca8a2ff0aa540d23582c741dab11ffb8de21cb0b13215aae3c7617"
+  },
+  "id": "RaJD5M0zenehjBMk",
+  "tags": []
+}
